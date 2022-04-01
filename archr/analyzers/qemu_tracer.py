@@ -32,6 +32,7 @@ class QemuTraceResult:
 
     # introspection
     trace = None
+    syscall_data = None
     mapped_files = None
     crash_address = None
     base_address = None
@@ -43,8 +44,10 @@ class QemuTraceResult:
     taint_fd = None
 
     def tracer_technique(self, **kwargs):
-        return angr.exploration_techniques.Tracer(self.trace, crash_addr=self.crash_address, **kwargs)
+        return angr.exploration_techniques.Tracer(self.trace, crash_addr=self.crash_address,
+                                                  syscall_data=self.syscall_data, **kwargs)
 
+_rand_vals_re = re.compile(br"RANDOM \((?P<value>\d+), (?P<size>\d+)\)")
 _trace_old_re = re.compile(br'Trace (.*) \[(?P<addr>.*)\].*')
 _trace_new_re = re.compile(br'Trace (.*) \[(?P<something1>.*)\/(?P<addr>.*)\/(?P<flags>.*)\].*')
 
@@ -192,11 +195,21 @@ class QEMUTracerAnalyzer(ContextAnalyzer):
                 except StopIteration as e:
                     raise QEMUTracerError("The trace does not include any data. Did you forget to chmod +x the binary?") from e
 
-                # record the trace
+                # record the trace and save syscall values(if any)
                 _trace_re = _trace_old_re if self.target.target_os == 'cgc' else _trace_new_re
-                r.trace = [
-                    int(_trace_re.match(t).group('addr'), 16) for t in trace_iter if t.startswith(b"Trace ")
-                ]
+                r.trace = []
+                syscall_data = {"random": []}
+                syscall_values_found = False
+                for entry in trace_iter:
+                    if entry.startswith(b"Trace "):
+                        r.trace.append(int(_trace_re.match(entry).group('addr'), 16))
+                    elif entry.startswith(b"RANDOM"):
+                        match = _rand_vals_re.match(entry)
+                        syscall_values_found = True
+                        syscall_data["random"].append((int(match.group('value'), 16), int(match.group('size'))))
+
+                if syscall_values_found:
+                    r.syscall_data = syscall_data
 
                 endings = trace.rsplit(b'\n', 3)[1:3]
 
