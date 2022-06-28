@@ -51,7 +51,7 @@ _trace_new_re = re.compile(br'Trace (.*) \[(?P<something1>.*)\/(?P<addr>.*)\/(?P
 class QEMUTracerAnalyzer(ContextAnalyzer):
     REQUIRED_IMPLANT = "shellphish_qemu"
 
-    def __init__(self, target, timeout=10, ld_linux=None, ld_preload=None, library_path=None, seed=None, **kwargs):
+    def __init__(self, target, timeout=20, ld_linux=None, ld_preload=None, library_path=None, seed=None, **kwargs):
         super().__init__(target, **kwargs)
         self.timeout = timeout
         self.ld_linux = ld_linux
@@ -194,9 +194,18 @@ class QEMUTracerAnalyzer(ContextAnalyzer):
 
                 # record the trace
                 _trace_re = _trace_old_re if self.target.target_os == 'cgc' else _trace_new_re
+
+                for t in trace_iter:
+                    if t.startswith(b"Trace 0"):
+                        custom_pattern = t.split(b'0x')[0]
+                        first = int(_trace_re.match(t).group('addr'), 16)
+                        break
+
                 r.trace = [
-                    int(_trace_re.match(t).group('addr'), 16) for t in trace_iter if t.startswith(b"Trace ")
+                    int(_trace_re.match(t).group('addr'), 16) for t in trace_iter if t.startswith(custom_pattern)
                 ]
+
+                r.trace.insert(0, first)
 
                 endings = trace.rsplit(b'\n', 3)[1:3]
 
@@ -284,7 +293,7 @@ class QEMUTracerAnalyzer(ContextAnalyzer):
         # record trace
         if trace_filename:
             flags = "nochain,exec,page,strace" if 'cgc' not in qemu_variant else "exec"
-            cmd_args += ["-d", flags, "-D", trace_filename]
+            cmd_args += ["-d", flags, "-D", trace_filename, "-T", "0x40000ECEF0:1"]
         else:
             if 'cgc' in qemu_variant:
                 cmd_args += ["-enable_double_empty_exiting"]

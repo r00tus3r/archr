@@ -105,8 +105,11 @@ class angrStateAnalyzer(Analyzer):
         super().__init__(target)
         self.project_analyzer = project_analyzer
 
-    def fire(self, **kwargs): #pylint:disable=arguments-differ
-        project = self.project_analyzer.fire()
+    def fire(self, core_path='', **kwargs): #pylint:disable=arguments-differ
+        if core_path:
+            project = self.project_analyzer.fire(core_path)
+        else:
+            project = self.project_analyzer.fire()
         if 'cwd' not in kwargs:
             cwd = os.path.dirname(self.project_analyzer.target.target_path)
             kwargs['cwd'] = bytes(cwd, 'utf-8')
@@ -118,15 +121,27 @@ class angrStateAnalyzer(Analyzer):
         env = kwargs.pop('env', self.target.target_env)
         brk = kwargs.pop('brk', self.project_analyzer._mem_mapping.get('[heap]', None))
 
-        s = project.factory.full_init_state(
-            concrete_fs=concrete_fs,
-            chroot=chroot,
-            stack_end=stack_end,
-            args=args,
-            env=env,
-            brk=brk,
-            **kwargs
-        )
+        if core_path:
+            project.loader.main_object = project.loader.elfcore_object
+            s = project.factory.blank_state(
+                    mode='tracing',
+                    concrete_fs=concrete_fs,
+                    chroot=chroot,
+                    stack_end=stack_end,
+                    env=env,
+                    brk=brk,
+                    **kwargs
+                    )
+        else:
+            s = project.factory.full_init_state(
+                    concrete_fs=concrete_fs,
+                    chroot=chroot,
+                    stack_end=stack_end,
+                    args=args,
+                    env=env,
+                    brk=brk,
+                    **kwargs
+                    )
         s.fs.mount("/", SimArchrMount(self.target))
         s.fs.set_state(s)
         return s
