@@ -7,6 +7,8 @@ import os
 import re
 
 from . import Target
+from docker.errors import APIError
+from ..errors import ArchrValueError
 
 
 docker = None
@@ -104,6 +106,9 @@ class DockerImageTarget(Target):
             (self.image.attrs['Config']['Entrypoint'] or [ ]) + (self.image.attrs['Config']['Cmd'] or [ ])
         )
 
+        if not self.target_args:
+            raise ArchrValueError("Canot build: target_args is empty!")
+
         # let's assume that we're not analyzing setarch, /bin/sh, or any variant of qemu
         if self.target_args[:2] == [ "/bin/sh", "-c" ]:
             self.target_args = shlex.split(self.target_args[-1])
@@ -144,20 +149,27 @@ class DockerImageTarget(Target):
         else:
             use_init = self.use_init
 
-        self.container = self._client.containers.run(
-            self.image,
-            name=name,
-            entrypoint=entry_point, command=[], environment=self.target_env,
-            user=user, labels=labels,
-            hostname=self.hostname,
-            detach=True, auto_remove=self.rm, working_dir=working_dir,
-            stdin_open=True, stdout=True, stderr=True,
-            privileged=True, security_opt=["seccomp=unconfined"], volumes=self.volumes,
-            network_mode=self.network_mode,
-            network=self.network,
-            init=use_init
-            #network_mode='bridge', ports={11111:11111, self.target_port:self.target_port}
-        )
+        try:
+            self.container = self._client.containers.run(
+                self.image,
+                name=name,
+                entrypoint=entry_point, command=[], environment=self.target_env,
+                user=user, labels=labels,
+                hostname=self.hostname,
+                detach=True, auto_remove=self.rm, working_dir=working_dir,
+                stdin_open=True, stdout=True, stderr=True,
+                privileged=True, security_opt=["seccomp=unconfined"], volumes=self.volumes,
+                network_mode=self.network_mode,
+                network=self.network,
+                init=use_init
+                #network_mode='bridge', ports={11111:11111, self.target_port:self.target_port}
+            )
+        except APIError as e:
+            if f'stat {entry_point[0]}: no such file or directory: unknown' in e.explanation:
+                raise ArchrError(f"Entrypoint not found in container: {entry_point[0]}")
+            else:
+                raise e
+
         self.container.reload()  # update self.container.attrs
 
         if timeout is not None:
@@ -440,7 +452,11 @@ class DockerImageTarget(Target):
     #
     def _pull(self):
         try:
-            self._client.images.pull(self.image_id)
+            if ':' in self.image_id:
+                image, tag = self.image_id.split(':')
+                self._client.images.pull(image, tag=tag)
+            else:
+                self._client.images.pull(self.image_id)
         except docker.errors.ImageNotFound as err:
             l.info("Unable to pull image %s, got error %s, ignoring and continuing on", self.image_id, err)
 
